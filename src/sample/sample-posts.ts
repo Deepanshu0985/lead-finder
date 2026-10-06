@@ -125,3 +125,27 @@ export function sampleListing(subreddit: string, nowMs = Date.now()) {
 export function sampleFetchNew(nowMs = Date.now()) {
   return async (subreddit: string, _limit?: number): Promise<RedditPost[]> => parseListing(sampleListing(subreddit, nowMs));
 }
+
+/** The same sample posts as Reddit's Atom feed (/r/<sub>/new/.rss), escaped exactly like Reddit does it. */
+export function sampleAtomFeed(subreddit: string, nowMs = Date.now()): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const entries = SAMPLE_POSTS.filter((p) => p.subreddit.toLowerCase() === subreddit.toLowerCase()).map((p) => {
+    const url = `https://www.reddit.com/r/${p.subreddit}/comments/${p.id}/sample/`;
+    const iso = new Date(nowMs - p.ageMinutes * 60_000).toISOString().replace(/\.\d{3}Z$/, "+00:00");
+    // Reddit double-escapes: post HTML has &quot; etc., then the whole HTML is escaped into <content>.
+    const html =
+      `<!-- SC_OFF --><div class="md"><p>${esc(p.selftext)}</p></div><!-- SC_ON --> &#32; submitted by &#32; ` +
+      `<a href="https://www.reddit.com/user/sample_user_123"> /u/sample_user_123 </a> <br/> ` +
+      `<span><a href="${url}">[link]</a></span> &#32; <span><a href="${url}">[comments]</a></span>`;
+    return (
+      `<entry><author><name>/u/sample_user_123</name><uri>https://www.reddit.com/user/sample_user_123</uri></author>` +
+      `<category term="${p.subreddit}" label="r/${p.subreddit}"/><content type="html">${esc(html)}</content>` +
+      `<id>t3_${p.id}</id><link href="${url}" /><updated>${iso}</updated><published>${iso}</published>` +
+      `<title>${esc(p.title)}</title></entry>`
+    );
+  });
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom">` +
+    `<category term="${subreddit}" label="r/${subreddit}"/><title>newest submissions : ${subreddit}</title>${entries.join("")}</feed>`
+  );
+}

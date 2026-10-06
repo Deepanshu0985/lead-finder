@@ -1,13 +1,12 @@
 /**
  * Trigger a run over HTTP. Protected by CRON_SECRET.
- * The GitHub Actions workflow runs the CLI directly (no timeout worries); this route is
- * for manual triggers, external cron services, or Vercel Cron on a paid plan.
+ * GitHub Actions calls this every 3 hours, so all real secrets live only in Vercel.
  */
 import { timingSafeEqualStr } from "@/lib/auth";
 import { runFromEnv } from "@/lib/run";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300; // Vercel Hobby allows up to 300s with Fluid compute (on by default)
 
 async function handle(req: Request) {
   const secret = process.env.CRON_SECRET;

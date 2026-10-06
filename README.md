@@ -5,8 +5,8 @@ Finds fresh Reddit posts where someone needs a chatbot, automation, website or a
 **It never posts to Reddit.** It only reads. You review each draft, edit it, and post it yourself.
 
 ```
-GitHub Actions (every 3h)
-   └─ fetch r/<sub>/new  (read-only, ~1 req/sec, 15 requests per run)
+GitHub Actions (timer, every 3h) ──POST /api/run──▶ Vercel app (has all the keys)
+   └─ read r/<sub>/new  (RSS now, official API once approved; read-only, polite pacing)
        └─ skip already-seen ids → cheap keyword/age/[For Hire] filter
            └─ Mistral classify (JSON mode, max 25 calls/run)
                └─ Mistral draft for score ≥ 60 (max 10 calls/run)
@@ -14,53 +14,61 @@ GitHub Actions (every 3h)
 Vercel → /dashboard (password) → copy draft · mark replied · skip
 ```
 
+**Where secrets live:** all keys go in **Vercel** only. GitHub is just a free timer that pokes your Vercel app every 3 hours, so it needs one shared password (`CRON_SECRET`) and your app's URL. Nothing else.
+
 ---
 
-## 1. Before anything: Reddit API access (read this)
+## Setup checklist (≈20 minutes)
 
-Reddit changed its rules in **November 2025** (the *Responsible Builder Policy*). The old "go to reddit.com/prefs/apps and click *create app*" flow no longer gives you working credentials on its own. **Every new app now needs manual approval from Reddit**, and approval isn't guaranteed — small projects are sometimes refused.
+1. **Supabase**: create the table (section 2).
+2. **Telegram**: create the bot (section 3).
+3. **Mistral**: get an API key at console.mistral.ai.
+4. **Vercel**: deploy and add the environment variables (section 4).
+5. **GitHub**: add `CRON_SECRET` + `APP_URL` (section 5).
+6. **Reddit**: nothing needed to start (RSS mode). Apply for API access in parallel (section 1).
 
-Steps:
+---
 
-1. **Use a Reddit account for Smartvyn**, not your personal one. The policy asks that the app account is used only for the app.
+## 1. Reddit access: RSS now, official API later
+
+### RSS mode (default, no keys)
+
+With no Reddit keys set, the tool reads Reddit's public RSS feeds (`reddit.com/r/<sub>/new/.rss`). Reddit offers these for feed readers, and this tool reads them like one: 15 feeds every 3 hours, one every few seconds.
+
+Things to know:
+- RSS has no "pinned" or flair info. The 24-hour age filter and the `[For Hire]` title filter still cover most of that.
+- **Reddit may block some networks.** If a run reports `403 … blocking this network`, Reddit is refusing that server. Check with `npm run run:check` from your Mac, and look at the run result in GitHub Actions.
+- It isn't the official API, so Reddit could block or restrict it at any time. That's why it's worth applying for real access too.
+
+### Official API (recommended, needs approval)
+
+Since **November 2025** (Reddit's *Responsible Builder Policy*), every new API app needs manual approval. It can take a few weeks, and small projects are sometimes refused.
+
+1. Use a **Reddit account for Smartvyn**, not your personal one.
 2. Read the [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy).
-3. Submit a request through [Reddit's Developer Support form](https://support.reddithelp.com/hc/en-us/requests/new?ticket_form_id=14868593862164). Be specific and honest. Something like:
-   > Read-only tool for a small software studio. Every 3 hours it reads `/new` from ~15 public subreddits (about 15 GET requests per run, ~120/day), using app-only OAuth with the `read` scope. It never posts, comments, votes or messages; a human reads and replies manually. No usernames are stored and no data is shared or resold. Data is kept only to avoid showing the same post twice.
-4. **Commercial use:** Reddit's Data API terms treat commercial use separately. This tool supports your business, so say that plainly in the request and ask what terms apply. Don't skip this — it's the main risk to the account.
-5. Once approved, create the app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps):
-   - type: **script**
-   - redirect uri: `http://localhost:8080` (required field; not used)
-   - **Client ID** = the short string under the app name → `REDDIT_CLIENT_ID`
-   - **Secret** → `REDDIT_CLIENT_SECRET`
-6. Set `REDDIT_USER_AGENT` in Reddit's format, using the Smartvyn account's username:
-   `web:smartvyn-lead-finder:1.0.0 (by /u/your_smartvyn_account)`
+3. Submit a request via [Reddit's Developer Support form](https://support.reddithelp.com/hc/en-us/requests/new?ticket_form_id=14868593862164). Be honest and specific, for example:
+   > Read-only tool for a small software studio. Every 3 hours it reads `/new` from ~15 public subreddits (about 15 GET requests per run, ~120/day), using app-only OAuth with the `read` scope. It never posts, comments, votes or messages; a human reads and replies manually. No usernames are stored and no data is shared or resold. It supports our business, so please let us know what terms apply to commercial use.
+4. Once approved, create a **script** app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) (redirect uri: `http://localhost:8080`, not used).
+5. In Vercel, add:
+   - `REDDIT_CLIENT_ID`: the short string under the app name
+   - `REDDIT_CLIENT_SECRET`
+   - `REDDIT_USER_AGENT`: `web:smartvyn-lead-finder:1.0.0 (by /u/your_smartvyn_account)`
 
-The tool uses **app-only OAuth with scope `read`**, so it never needs the account password and the token can't post even if someone tried.
+   Redeploy. The tool switches to the official API automatically when the ID and secret are present.
 
-> **Fallback while you wait:** `REDDIT_MODE=public` reads the public `.json` listings with no keys. Reddit blocks many unauthenticated requests from cloud servers (including GitHub Actions), so expect 403s. It's mainly useful from your own laptop with `npm run run:dry`.
+It uses app-only OAuth with scope `read`, so it never needs the account password, and the token can't post even if someone tried.
 
 ---
 
-## 2. Telegram bot (2 minutes)
-
-1. In Telegram, open **@BotFather** → `/newbot` → pick a name (e.g. *Smartvyn Leads*) and a username ending in `bot`.
-2. Copy the token → `TELEGRAM_BOT_TOKEN`.
-3. Open your new bot and send it any message (e.g. `hi`). Bots can't message you first.
-4. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser. Find `"chat":{"id": 123456789 ...}` → `TELEGRAM_CHAT_ID`.
-
-Each run sends one short header, then one message per lead. The draft is inside a code block, so **tapping it copies it** on mobile.
-
----
-
-## 3. Supabase (free tier)
+## 2. Supabase (free tier)
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. **SQL Editor** → paste `supabase/schema.sql` → Run.
 3. **Project Settings → API**:
    - Project URL → `SUPABASE_URL`
-   - the **secret / service_role** key → `SUPABASE_SERVICE_ROLE_KEY` (server-only; never put it in browser code)
+   - the **secret / service_role** key → `SUPABASE_SERVICE_ROLE_KEY` (server-only)
 
-Row Level Security is on with no policies, so the public anon key can't read anything. Only the server key can.
+Row Level Security is on with no policies, so the public anon key can't read anything.
 
 The table stores the post id, subreddit, title, link, time, AI result, draft and your status. **No usernames or post bodies are stored.**
 
@@ -68,52 +76,60 @@ Free-tier projects pause after a week with no activity. Runs every 3 hours keep 
 
 ---
 
-## 4. Environment variables
+## 3. Telegram bot (2 minutes)
 
-Copy `.env.example` → `.env.local` for local use. Never commit it.
+1. In Telegram, open **@BotFather** → `/newbot` → pick a name (e.g. *Smartvyn Leads*) and a username ending in `bot`.
+2. Copy the token → `TELEGRAM_BOT_TOKEN`.
+3. Open your new bot and send it any message (e.g. `hi`). Bots can't message you first.
+4. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser. Find `"chat":{"id": 123456789 ...}` → `TELEGRAM_CHAT_ID`.
 
-| Variable | Used by | What |
-|---|---|---|
-| `MISTRAL_API_KEY` | runner | from console.mistral.ai |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | runner | from step 1 |
-| `REDDIT_USER_AGENT` | runner | `web:smartvyn-lead-finder:1.0.0 (by /u/…)` |
-| `REDDIT_MODE` | runner | `oauth` (default) or `public` |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | runner | from step 2 |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | both | from step 3 |
-| `DASHBOARD_PASSWORD` | dashboard | your login password |
-| `SESSION_SECRET` | dashboard | long random string: `openssl rand -hex 32` |
-| `DASHBOARD_URL` | runner | optional; adds an "Open dashboard" link in Telegram |
-| `CRON_SECRET` | dashboard | optional; protects `/api/run` |
+Each run sends one short header, then one message per lead. The draft is in a code block, so **tapping it copies it** on mobile.
+
+---
+
+## 4. Vercel (app + all the keys)
+
+1. Vercel → *Add New Project* → import `lead-finder` from GitHub (framework: Next.js, defaults are fine).
+2. **Settings → Environment Variables**, add:
+
+| Variable | What |
+|---|---|
+| `MISTRAL_API_KEY` | from console.mistral.ai |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | from section 3 |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | from section 2 |
+| `DASHBOARD_PASSWORD` | any password you choose |
+| `SESSION_SECRET` | random string: `openssl rand -hex 32` |
+| `CRON_SECRET` | another random string: `openssl rand -hex 32` |
+| `DASHBOARD_URL` | optional: your app URL, adds an "Open dashboard" link in Telegram |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` | **later**, once Reddit approves (section 1) |
+
+3. Deploy (or **Redeploy** after adding variables; Vercel only picks up new variables on a new deploy).
+4. Open `https://<your-app>.vercel.app/dashboard` and log in.
+
+A run can take 1–2 minutes (polite pacing plus AI calls). The `/api/run` route allows up to 300 seconds, which Vercel's free plan supports.
 
 Changing `DASHBOARD_PASSWORD` or `SESSION_SECRET` logs out every open session.
 
 ---
 
-## 5. Deploy
+## 5. GitHub (just the timer)
 
-### Dashboard → Vercel
+**Why GitHub at all?** On Vercel's free plan, its built-in cron can only run **once a day**. GitHub Actions can run every 3 hours for free. GitHub doesn't do the work; it only calls your Vercel app.
 
-1. Push this folder to a **private** GitHub repo.
-2. Vercel → *Add New Project* → import the repo (framework: Next.js, defaults are fine).
-3. Add these env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `DASHBOARD_PASSWORD`, `SESSION_SECRET` (+ `CRON_SECRET` and the runner vars if you want `/api/run` to work).
-4. Deploy → open `https://<project>.vercel.app/dashboard`.
+Repo → **Settings → Secrets and variables → Actions**:
+- **Secrets** tab → `CRON_SECRET`: the **same value** you put in Vercel.
+- **Variables** tab → `APP_URL`: e.g. `https://smartvyn-leads.vercel.app` (no trailing slash).
 
-### Schedule → GitHub Actions
+Then **Actions → Reddit lead finder → Run workflow** to test. The run log shows the summary: how many posts were fetched, filtered, classified and sent.
 
-**Why not Vercel Cron?** On Vercel's free Hobby plan, cron jobs can run at most **once a day**, and a schedule like "every 3 hours" fails at deploy time. GitHub Actions schedules are free and have no 60-second function limit, so the runner lives there.
+Notes:
+- Until both values are set, the workflow just skips with a warning. No failure emails.
+- Times are UTC; IST is UTC+5:30. Edit the `cron:` line to change them.
+- GitHub pauses scheduled workflows in repos with no commits for 60 days. If Telegram goes quiet, check the Actions tab.
+- A separate **Tests** workflow runs on every push, including the check that no code can post to Reddit.
 
-1. GitHub repo → **Settings → Secrets and variables → Actions**.
-2. **Secrets:** `MISTRAL_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
-3. **Variables** (optional): `DASHBOARD_URL`, `REDDIT_MODE`.
-4. **Actions** tab → *Reddit lead finder* → **Run workflow** to test now.
-
-The workflow (`.github/workflows/lead-finder.yml`) runs every 3 hours, runs the tests first (including the no-posting check), and never runs two copies at once. To change the timing, edit the `cron:` line. Times are UTC; IST is UTC+5:30.
-
-GitHub turns off scheduled workflows in repos with no commits for 60 days. If the Telegram messages stop, check the Actions tab and re-enable it.
-
-**Other ways to trigger a run:** any external cron service can call
-`curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://<project>.vercel.app/api/run`.
-On Vercel Hobby, a function has a short time limit, so the GitHub Actions runner is more reliable.
+Any other cron service works too:
+`curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://<your-app>.vercel.app/api/run`
 
 ---
 
@@ -121,16 +137,16 @@ On Vercel Hobby, a function has a short time limit, so the GitHub Actions runner
 
 Everything you'd want to change is in **one file**:
 
-- `subreddits` — which subreddits to read (only these are ever fetched)
-- `keywords` — a post must contain one of these to reach the AI
-- `excludeTitlePatterns` — skips `[For Hire]` and other freelancer ads
-- `scoreThreshold` — default `60`
-- `ai.maxClassifyCallsPerRun` / `ai.maxDraftCallsPerRun` — cost caps (25 / 10)
-- `digestSize` — leads per Telegram digest (8)
-- `maxPostAgeHours` — default 24
-- `brand` — name, portfolio link, services
+- `subreddits`: which subreddits to read (only these are ever fetched)
+- `keywords`: a post must contain one of these to reach the AI
+- `excludeTitlePatterns`: skips `[For Hire]` and other freelancer ads
+- `scoreThreshold`: default `60`
+- `ai.maxClassifyCallsPerRun` / `ai.maxDraftCallsPerRun`: cost caps (25 / 10)
+- `digestSize`: leads per Telegram digest (8)
+- `maxPostAgeHours`: default 24
+- `brand`: name, portfolio link, services
 
-Push the change and the next run uses it.
+Push the change; Vercel redeploys and the next run uses it.
 
 ---
 
@@ -138,14 +154,15 @@ Push the change and the next run uses it.
 
 ```bash
 npm install
-npm test             # 20 tests: pipeline on sample data, dedupe, caps, no-posting guard
-npm run run:sample   # sample Reddit posts → real Mistral if MISTRAL_API_KEY is set → prints the digest
-npm run run:dry      # REAL Reddit + Mistral, but nothing stored or sent; prints the digest
+npm test             # pipeline on sample data, RSS parsing, dedupe, caps, no-posting guard
+npm run run:check    # REAL Reddit (RSS) + offline AI stand-in: does reading Reddit work from here? No keys needed.
+npm run run:sample   # sample posts → real Mistral if MISTRAL_API_KEY is set → prints the digest
+npm run run:dry      # REAL Reddit + real Mistral, nothing stored or sent
 npm run run:once     # the real thing (needs every env var)
 npm run dev          # dashboard at http://localhost:3000
 ```
 
-`run:sample` works with no keys at all (it uses a small offline stand-in for Mistral), so you can see the whole flow end to end first.
+For local runs, put keys in `.env.local` (copy `.env.example`) and load it, e.g. `node --env-file=.env.local --import tsx scripts/run.ts --dry-run`.
 
 ---
 
@@ -153,11 +170,11 @@ npm run dev          # dashboard at http://localhost:3000
 
 | Rule | Where |
 |---|---|
-| Never posts, comments, votes or messages | `src/lib/reddit.ts` has only GET for content; the single POST goes to the OAuth token URL with `scope=read`. `tests/no-posting.test.ts` scans the codebase for Reddit write endpoints and write libraries and fails the build if any appear. |
-| Polite reading | ~1.1s gap between requests, honours `x-ratelimit-*` and `Retry-After`, proper User-Agent, only configured subreddits (names validated). |
-| Same post never sent twice | Every fetched id is stored. Leads are "claimed" with a conditional update (`notified_at IS NULL`) before sending, so even two overlapping runs can't both send it. If Telegram fails mid-way, unsent leads are released for the next run. |
-| No personal names | Reddit author fields are dropped at parse time; prompts forbid names and sign-offs; branding is "Smartvyn" / "we". |
-| Draft rules | Prompt asks for helpful, short, human replies with no invented facts. Code then **enforces** links: no links/emails at all unless the post asks for a developer or recommendations (and promo risk isn't high), then at most one portfolio link. Emojis are stripped. |
+| Never posts, comments, votes or messages | `src/lib/reddit.ts` only sends GET requests for content. The single POST goes to the OAuth token URL with `scope=read`. `tests/no-posting.test.ts` scans the codebase for Reddit write endpoints and libraries and fails CI if any appear. |
+| Polite reading | 3s between requests in RSS mode, 1.1s with the official API. Honours `x-ratelimit-*` and `Retry-After`, sends a proper User-Agent, and only reads the configured subreddits (names validated). |
+| Same post never sent twice | Every fetched id is stored. Leads are "claimed" with a conditional update (`notified_at IS NULL`) before sending, so two overlapping runs can't both send one. If Telegram fails mid-way, unsent leads are released for the next run. |
+| No personal names | Author fields and RSS "submitted by /u/…" footers are dropped at parse time. Prompts forbid names and sign-offs; replies use "Smartvyn" / "we". |
+| Draft rules | The prompt asks for helpful, short, human replies with no invented facts. Code then **enforces** links: none at all unless the post asks for a developer or recommendations (and promo risk isn't high), then at most one portfolio link. Emojis are stripped. |
 | Prompt injection | Post text is wrapped as untrusted data; model output is validated and clamped before use. |
 | Low AI cost | Seen-id check and keyword filter run first; hard caps per run; post body trimmed to 1,800 chars. |
 
@@ -166,7 +183,7 @@ npm run dev          # dashboard at http://localhost:3000
 ## 9. Daily routine (≈15 min)
 
 1. Open the Telegram digest (or the dashboard).
-2. For each lead: open the post, read it fully, edit the draft so it sounds like you, post it from the Smartvyn account.
+2. For each lead: open the post, read it fully, edit the draft so it sounds like you, and post it from the Smartvyn account.
 3. Mark it **replied** or **skip** on the dashboard.
 
-Tip: in subreddits marked *promo risk: high*, post the helpful part only. Leave out the portfolio even if the draft has it.
+Tip: in subreddits marked *promo risk: high*, post only the helpful part. Leave out the portfolio even if the draft has it.

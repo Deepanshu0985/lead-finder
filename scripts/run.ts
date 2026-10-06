@@ -5,6 +5,8 @@
  *   npm run run:dry      → real Reddit + Mistral, but in-memory store and console output
  *   npm run run:sample   → sample Reddit data, real Mistral if MISTRAL_API_KEY is set
  *                          (else a canned offline model), console output only
+ *   npm run run:check    → REAL Reddit (rss/oauth) + offline model: checks Reddit reading works,
+ *                          no keys needed, nothing stored or sent
  */
 import { runFromEnv } from "../src/lib/run";
 import { sampleFetchNew } from "../src/sample/sample-posts";
@@ -13,7 +15,8 @@ import { offlineChat } from "../src/sample/offline-chat";
 async function main() {
   const args = new Set(process.argv.slice(2));
   const sample = args.has("--sample");
-  const dryRun = sample || args.has("--dry-run");
+  const offlineAi = args.has("--offline-ai");
+  const dryRun = sample || offlineAi || args.has("--dry-run");
 
   if (sample) {
     console.log(
@@ -26,7 +29,7 @@ async function main() {
   const summary = await runFromEnv({
     dryRun,
     fetchNew: sample ? sampleFetchNew() : undefined,
-    chat: sample && !process.env.MISTRAL_API_KEY ? offlineChat : undefined,
+    chat: offlineAi || (sample && !process.env.MISTRAL_API_KEY) ? offlineChat : undefined,
   });
 
   console.log("\nSummary:", summary);

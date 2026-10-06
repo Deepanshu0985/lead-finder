@@ -1,38 +1,42 @@
 name: Reddit lead finder
 
+# Only a timer. It calls your Vercel app, which does the work.
+# All real keys (Mistral, Telegram, Supabase, Reddit) live in Vercel only.
+# GitHub needs just two things:
+#   Secret   CRON_SECRET  → same value as CRON_SECRET in Vercel
+#   Variable APP_URL      → e.g. https://smartvyn-leads.vercel.app (no trailing slash)
+
 on:
   schedule:
-    # Every 3 hours (UTC). GitHub may delay scheduled runs by a few minutes; that's fine.
-    # IST times: 05:30, 08:30, 11:30, 14:30, 17:30, 20:30, 23:30, 02:30
+    # Every 3 hours (UTC). IST: 05:30, 08:30, 11:30, 14:30, 17:30, 20:30, 23:30, 02:30
     - cron: "0 */3 * * *"
   workflow_dispatch: {} # "Run workflow" button for manual runs
 
 concurrency:
   group: lead-finder
-  cancel-in-progress: false # never run two at once
+  cancel-in-progress: false
 
 jobs:
-  run:
+  trigger:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - name: Find leads
-        run: npm run run:once
+      - name: Check setup
         env:
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
-          REDDIT_MODE: ${{ vars.REDDIT_MODE || 'oauth' }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            echo "::warning::Not set up yet: add secret CRON_SECRET and variable APP_URL. Skipping."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+      - name: Run lead finder
+        if: env.SKIP != '1'
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          code=$(curl -sS -o result.json -w "%{http_code}" --max-time 330 \
+            -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/run")
+          cat result.json; echo
+          if [ "$code" != "200" ]; then echo "::error::Run failed with HTTP $code"; exit 1; fi

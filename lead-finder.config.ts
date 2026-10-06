@@ -16,7 +16,6 @@ export interface LeadFinderConfig {
   postsPerSubreddit: number;
   ai: { model: string; maxClassifyCallsPerRun: number; maxDraftCallsPerRun: number; maxBodyChars: number };
   digestSize: number;
-  redditMinRequestGapMs: number;
   dashboardDays: number;
 }
 
@@ -119,9 +118,6 @@ export const config: LeadFinderConfig = {
 
   /** How many leads go into each Telegram digest (top N by score). */
   digestSize: 8,
-
-  /** Politeness: minimum gap between Reddit requests, in ms (~1 req/sec). */
-  redditMinRequestGapMs: 1100,
 
   /** Dashboard shows leads from the last N days. */
   dashboardDays: 7,

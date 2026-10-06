@@ -11,7 +11,8 @@
     "test": "vitest run",
     "run:once": "tsx scripts/run.ts",
     "run:dry": "tsx scripts/run.ts --dry-run",
-    "run:sample": "tsx scripts/run.ts --sample"
+    "run:sample": "tsx scripts/run.ts --sample",
+    "run:check": "tsx scripts/run.ts --offline-ai"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

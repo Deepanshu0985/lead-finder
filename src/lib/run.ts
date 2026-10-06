@@ -2,7 +2,9 @@
 import { config } from "../../lead-finder.config";
 import { createMistralChat, type ChatFn } from "./mistral";
 import { runPipeline } from "./pipeline";
-import { RedditReader } from "./reddit";
+import { RedditReader, type RedditMode } from "./reddit";
+
+const DEFAULT_USER_AGENT = "web:smartvyn-lead-finder:1.0.0 (Smartvyn read-only lead finder)";
 import { MemoryStore, storeFromEnv, type LeadStore } from "./store";
 import { createTelegramSender, type SendFn } from "./telegram";
 import type { RedditPost } from "./types";
@@ -29,9 +31,9 @@ export async function runFromEnv(o: RunOptions = {}) {
       const reader = new RedditReader({
         clientId: process.env.REDDIT_CLIENT_ID,
         clientSecret: process.env.REDDIT_CLIENT_SECRET,
-        userAgent: required("REDDIT_USER_AGENT"),
-        mode: (process.env.REDDIT_MODE as "oauth" | "public" | undefined) || undefined,
-        minRequestGapMs: config.redditMinRequestGapMs,
+        userAgent: process.env.REDDIT_USER_AGENT || DEFAULT_USER_AGENT,
+        // oauth when keys are set, otherwise rss. Override with REDDIT_MODE=oauth|rss|public.
+        mode: (process.env.REDDIT_MODE as RedditMode | undefined) || undefined,
       });
       return (sub: string, limit: number) => reader.fetchNew(sub, limit);
     })();
