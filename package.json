@@ -1,0 +1,33 @@
+{
+  "name": "smartvyn-lead-finder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only Reddit lead finder for Smartvyn: finds posts, ranks them with Mistral, drafts replies, sends them to Telegram. Never posts to Reddit.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "run:once": "tsx scripts/run.ts",
+    "run:dry": "tsx scripts/run.ts --dry-run",
+    "run:sample": "tsx scripts/run.ts --sample"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "next": "^16.3.8",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
