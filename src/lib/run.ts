@@ -2,7 +2,7 @@
 import { config } from "../../lead-finder.config";
 import { createMistralChat, type ChatFn } from "./mistral";
 import { runPipeline } from "./pipeline";
-import { RedditReader, type RedditMode } from "./reddit";
+import { planRequests, RedditReader, type RedditMode } from "./reddit";
 
 const DEFAULT_USER_AGENT = "web:smartvyn-lead-finder:1.0.0 (Smartvyn read-only lead finder)";
 import { MemoryStore, storeFromEnv, type LeadStore } from "./store";
@@ -25,6 +25,7 @@ export interface RunOptions {
 }
 
 export async function runFromEnv(o: RunOptions = {}) {
+  let requestPlan: Array<{ subreddits: string; limit: number }> | undefined;
   const fetchNew =
     o.fetchNew ??
     (() => {
@@ -35,7 +36,13 @@ export async function runFromEnv(o: RunOptions = {}) {
         // oauth when keys are set, otherwise rss. Override with REDDIT_MODE=oauth|rss|public.
         mode: (process.env.REDDIT_MODE as RedditMode | undefined) || undefined,
       });
-      return (sub: string, limit: number) => reader.fetchNew(sub, limit);
+      requestPlan = planRequests(reader.mode, config.subreddits, {
+        busy: config.keyless.busySubreddits,
+        groupSize: config.keyless.groupSize,
+        perSubredditLimit: config.postsPerSubreddit,
+      });
+      (o.log ?? console.log)(`[lead-finder] Reddit mode: ${reader.mode}, ${requestPlan.length} requests`);
+      return (subs: string, limit: number) => reader.fetchNew(subs, limit);
     })();
 
   const chat = o.chat ?? createMistralChat({ apiKey: required("MISTRAL_API_KEY"), model: config.ai.model });
@@ -49,6 +56,7 @@ export async function runFromEnv(o: RunOptions = {}) {
   return runPipeline({
     config,
     fetchNew,
+    requestPlan,
     chat,
     store,
     send,

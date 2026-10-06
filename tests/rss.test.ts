@@ -46,3 +46,59 @@ describe("RSS mode", () => {
     await expect(r.fetchNew("n8n", 25)).rejects.toThrow(/403.*blocking this network/);
   });
 });
+
+import { planRequests } from "../src/lib/reddit";
+import { config } from "../lead-finder.config";
+
+describe("keyless request planning + rate limits", () => {
+  it("combines subreddits into a few requests, busy ones alone; one per sub with the API", () => {
+    const plan = planRequests("rss", config.subreddits, { busy: ["ChatGPT"], groupSize: 7, perSubredditLimit: 25 });
+    expect(plan).toHaveLength(3);
+    expect(plan[0]).toEqual({ subreddits: "ChatGPT", limit: 100 });
+    expect(plan.flatMap((p) => p.subreddits.split("+")).sort()).toEqual([...config.subreddits].sort());
+    expect(planRequests("oauth", config.subreddits, { busy: [], groupSize: 7, perSubredditLimit: 25 })).toHaveLength(15);
+  });
+
+  it("waits for Reddit's reset before the next request (not after the last), and retries a 429", async () => {
+    const sleeps: number[] = [];
+    let call = 0;
+    const fetchImpl = (async () => {
+      call++;
+      const headers = { "x-ratelimit-used": "1", "x-ratelimit-remaining": "0.0", "x-ratelimit-reset": "50" };
+      if (call === 2) return new Response("", { status: 429, headers: { ...headers, "x-ratelimit-reset": "10" } });
+      return new Response(sampleAtomFeed("n8n", NOW), { status: 200, headers });
+    }) as unknown as typeof fetch;
+    const r = new RedditReader({ userAgent: "web:test-app:1.0 (by /u/test)", fetchImpl, sleep: async (ms) => void sleeps.push(ms) });
+    await r.fetchNew("n8n", 100); // 1st: ok, budget used up
+    expect(sleeps).toEqual([]); // no sleep after a request
+    await r.fetchNew("n8n+automation", 100); // waits ~51s, gets 429, waits ~11s, ok
+    expect(sleeps).toHaveLength(2);
+    expect(sleeps[0]).toBeGreaterThan(49_000);
+    expect(sleeps[1]).toBeGreaterThan(9_000);
+    expect(call).toBe(3);
+  });
+
+  it("pipeline runs on combined requests and ignores subreddits that aren't configured", async () => {
+    const { runPipeline } = await import("../src/lib/pipeline");
+    const { MemoryStore } = await import("../src/lib/store");
+    const { offlineChat } = await import("../src/sample/offline-chat");
+    const { sampleFetchNew } = await import("../src/sample/sample-posts");
+    const base = sampleFetchNew(NOW);
+    const sent: string[] = [];
+    const s = await runPipeline({
+      config,
+      fetchNew: async (subs, limit) => [
+        ...(await base(subs, limit)),
+        { id: "t3_zzz", subreddit: "notconfigured", title: "Need a chatbot developer, paid", body: "", permalink: "https://www.reddit.com/r/x/comments/zzz/", createdUtc: NOW / 1000 - 60, isSelf: true, stickied: false, over18: false },
+      ],
+      requestPlan: planRequests("rss", config.subreddits, { busy: ["ChatGPT"], groupSize: 7, perSubredditLimit: 25 }),
+      chat: offlineChat,
+      store: new MemoryStore(),
+      send: async (t) => void sent.push(t),
+      now: () => NOW,
+    });
+    expect(s.fetched).toBe(10);
+    expect(s.notified).toBe(5);
+    expect(sent.join()).not.toContain("notconfigured");
+  });
+});

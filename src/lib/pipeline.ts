@@ -9,8 +9,10 @@ import type { RedditPost, RunSummary, StoredPost } from "./types";
 
 export interface PipelineDeps {
   config: LeadFinderConfig;
-  /** Read-only fetcher (RedditReader.fetchNew, or a fixture loader in tests). */
-  fetchNew: (subreddit: string, limit: number) => Promise<RedditPost[]>;
+  /** Read-only fetcher (RedditReader.fetchNew, or a fixture loader in tests). Accepts "a+b+c". */
+  fetchNew: (subreddits: string, limit: number) => Promise<RedditPost[]>;
+  /** Which requests to make. Default: one per configured subreddit. */
+  requestPlan?: Array<{ subreddits: string; limit: number }>;
   chat: ChatFn;
   store: LeadStore;
   send: SendFn;
@@ -72,16 +74,23 @@ export async function runPipeline(d: PipelineDeps): Promise<RunSummary> {
     dryRun: Boolean(d.dryRun),
   };
 
-  // 1. Fetch (sequential = polite). One bad subreddit doesn't kill the run.
+  // 1. Fetch (sequential = polite). One bad request doesn't kill the run.
+  const plan = d.requestPlan ?? cfg.subreddits.map((sub) => ({ subreddits: sub, limit: cfg.postsPerSubreddit }));
+  const allowed = new Set(cfg.subreddits.map((x) => x.toLowerCase()));
   const byId = new Map<string, RedditPost>();
-  for (const sub of cfg.subreddits) {
+  for (const req of plan) {
     try {
-      const posts = await d.fetchNew(sub, cfg.postsPerSubreddit);
-      for (const p of posts) byId.set(p.id, p);
-      log(`r/${sub}: ${posts.length} posts`);
+      const posts = await d.fetchNew(req.subreddits, req.limit);
+      let kept = 0;
+      for (const p of posts) {
+        if (!allowed.has(p.subreddit.toLowerCase())) continue; // only configured subreddits
+        byId.set(p.id, p);
+        kept++;
+      }
+      log(`r/${req.subreddits}: ${kept} posts`);
     } catch (e) {
-      s.errors.push(`fetch r/${sub}: ${(e as Error).message}`);
-      log(`r/${sub}: ERROR ${(e as Error).message}`);
+      s.errors.push(`fetch r/${req.subreddits}: ${(e as Error).message}`);
+      log(`r/${req.subreddits}: ERROR ${(e as Error).message}`);
     }
   }
   const all = [...byId.values()];

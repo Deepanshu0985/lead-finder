@@ -123,7 +123,8 @@ export function sampleListing(subreddit: string, nowMs = Date.now()) {
 }
 
 export function sampleFetchNew(nowMs = Date.now()) {
-  return async (subreddit: string, _limit?: number): Promise<RedditPost[]> => parseListing(sampleListing(subreddit, nowMs));
+  return async (subreddits: string, _limit?: number): Promise<RedditPost[]> =>
+    subreddits.split("+").flatMap((s) => parseListing(sampleListing(s, nowMs)));
 }
 
 /** The same sample posts as Reddit's Atom feed (/r/<sub>/new/.rss), escaped exactly like Reddit does it. */

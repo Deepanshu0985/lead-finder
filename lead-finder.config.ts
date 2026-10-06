@@ -14,6 +14,7 @@ export interface LeadFinderConfig {
   maxPostAgeHours: number;
   scoreThreshold: number;
   postsPerSubreddit: number;
+  keyless: { busySubreddits: readonly string[]; groupSize: number };
   ai: { model: string; maxClassifyCallsPerRun: number; maxDraftCallsPerRun: number; maxBodyChars: number };
   digestSize: number;
   dashboardDays: number;
@@ -104,8 +105,18 @@ export const config: LeadFinderConfig = {
   /** Leads at or above this score get a drafted reply and are sent to you. */
   scoreThreshold: 60,
 
-  /** How many posts to request per subreddit per run (Reddit max is 100). */
+  /** Official API: posts requested per subreddit per run (max 100). */
   postsPerSubreddit: 25,
+
+  /**
+   * Without API keys (RSS mode) Reddit allows ≈1 request/minute, so subreddits are combined
+   * into a few requests of the 100 newest posts each. Very busy subreddits get their own
+   * request so they don't crowd out quieter ones. 15 subreddits → 3 requests (~2 min).
+   */
+  keyless: {
+    busySubreddits: ["ChatGPT"],
+    groupSize: 7,
+  },
 
   /** Hard caps that keep Mistral costs low. */
   ai: {

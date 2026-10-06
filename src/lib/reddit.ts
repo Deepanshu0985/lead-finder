@@ -36,12 +36,35 @@ export interface RedditClientOptions {
 
 const SUBREDDIT_RE = /^[A-Za-z0-9_]{2,21}$/;
 
-/** Gentler pacing for the keyless modes. */
+/** Minimum gap between requests. Keyless modes are also held back by Reddit's own headers (≈1/min). */
 const DEFAULT_GAP: Record<RedditMode, number> = { oauth: 1100, rss: 3000, public: 3000 };
+
+/**
+ * Which requests to make. With the official API, one request per subreddit is cheap.
+ * Without keys Reddit allows ≈1 request per minute, so subreddits are combined
+ * ("a+b+c", up to 100 newest posts per request). Busy subreddits get their own request
+ * so they don't push quieter ones out of the 100.
+ */
+export function planRequests(
+  mode: RedditMode,
+  subreddits: readonly string[],
+  o: { busy: readonly string[]; groupSize: number; perSubredditLimit: number },
+): Array<{ subreddits: string; limit: number }> {
+  if (mode === "oauth") return subreddits.map((s) => ({ subreddits: s, limit: o.perSubredditLimit }));
+  const busy = new Set(o.busy.map((b) => b.toLowerCase()));
+  const solo = subreddits.filter((s) => busy.has(s.toLowerCase()));
+  const rest = subreddits.filter((s) => !busy.has(s.toLowerCase()));
+  const groups: string[][] = solo.map((s) => [s]);
+  const size = Math.max(1, o.groupSize);
+  for (let i = 0; i < rest.length; i += size) groups.push(rest.slice(i, i + size));
+  return groups.map((g) => ({ subreddits: g.join("+"), limit: 100 }));
+}
 
 export class RedditReader {
   private token: { value: string; expiresAt: number } | null = null;
   private lastRequestAt = 0;
+  /** Earliest time the next request may go out (from Reddit's rate-limit headers). */
+  private notBefore = 0;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   readonly mode: RedditMode;
@@ -83,13 +106,15 @@ export class RedditReader {
     return this.token.value;
   }
 
+  /** Wait until both our own pacing and Reddit's rate limit allow another request. */
+  private async waitTurn(): Promise<void> {
+    const gap = this.opts.minRequestGapMs ?? DEFAULT_GAP[this.mode];
+    const wait = Math.max(this.lastRequestAt + gap, this.notBefore) - Date.now();
+    if (wait > 0) await this.sleep(wait);
+  }
+
   /** The only way this app reads Reddit content. GET, always. Returns the raw body text. */
   private async redditGet(subreddit: string, limit: number): Promise<string> {
-    // Politeness: keep a minimum gap between requests.
-    const gap = this.opts.minRequestGapMs ?? DEFAULT_GAP[this.mode];
-    const wait = this.lastRequestAt + gap - Date.now();
-    if (wait > 0) await this.sleep(wait);
-
     const headers: Record<string, string> = { "User-Agent": this.opts.userAgent };
     let url: string;
     if (this.mode === "oauth") {
@@ -103,19 +128,21 @@ export class RedditReader {
     }
 
     for (let attempt = 0; attempt < 3; attempt++) {
+      await this.waitTurn();
       this.lastRequestAt = Date.now();
       const res = await this.fetchImpl(url, { method: "GET", headers });
 
-      // Respect Reddit's rate-limit headers.
+      // Respect Reddit's rate-limit headers: if the budget is used up, the NEXT request waits
+      // for the reset (we don't sleep after the last request of a run).
       const remaining = Number(res.headers.get("x-ratelimit-remaining"));
       const reset = Number(res.headers.get("x-ratelimit-reset"));
-      if (Number.isFinite(remaining) && remaining < 5 && Number.isFinite(reset)) {
-        await this.sleep(Math.min(reset, 120) * 1000);
+      if (res.headers.has("x-ratelimit-remaining") && remaining < 1 && Number.isFinite(reset)) {
+        this.notBefore = Date.now() + (Math.min(reset, 120) + 1) * 1000;
       }
 
       if (res.status === 429) {
-        const retryAfter = Number(res.headers.get("retry-after")) || (attempt + 1) * 15;
-        await this.sleep(Math.min(retryAfter, 120) * 1000);
+        const retryAfter = Number(res.headers.get("retry-after")) || (Number.isFinite(reset) ? reset + 1 : (attempt + 1) * 20);
+        this.notBefore = Math.max(this.notBefore, Date.now() + Math.min(retryAfter, 120) * 1000);
         continue;
       }
       if (res.status === 401 && this.mode === "oauth") {
@@ -135,12 +162,16 @@ export class RedditReader {
     throw new Error(`Reddit GET r/${subreddit} → rate-limited after retries`);
   }
 
-  /** Newest posts from one configured subreddit. */
-  async fetchNew(subreddit: string, limit = 25): Promise<RedditPost[]> {
-    if (!SUBREDDIT_RE.test(subreddit)) throw new Error(`Invalid subreddit name: ${subreddit}`);
+  /**
+   * Newest posts from one configured subreddit, or several combined ("a+b+c" — Reddit's
+   * multireddit syntax, one request for all of them).
+   */
+  async fetchNew(subreddits: string, limit = 25): Promise<RedditPost[]> {
+    const parts = subreddits.split("+");
+    for (const s of parts) if (!SUBREDDIT_RE.test(s)) throw new Error(`Invalid subreddit name: ${s}`);
     const n = Math.max(1, Math.min(100, limit));
-    const body = await this.redditGet(subreddit, n);
-    if (this.mode === "rss") return parseAtomFeed(body, subreddit);
+    const body = await this.redditGet(parts.join("+"), n);
+    if (this.mode === "rss") return parseAtomFeed(body, parts[0]);
     return parseListing(JSON.parse(body) as Listing);
   }
 }

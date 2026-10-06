@@ -33,7 +33,9 @@ Vercel → /dashboard (password) → copy draft · mark replied · skip
 
 ### RSS mode (default, no keys)
 
-With no Reddit keys set, the tool reads Reddit's public RSS feeds (`reddit.com/r/<sub>/new/.rss`). Reddit offers these for feed readers, and this tool reads them like one: 15 feeds every 3 hours, one every few seconds.
+With no Reddit keys set, the tool reads Reddit's public RSS feeds (`reddit.com/r/<sub>/new/.rss`). Reddit offers these for feed readers, and this tool reads them like one.
+
+Without keys, Reddit allows about **1 request per minute**. So the tool combines subreddits (`r/a+b+c/new/.rss`, the 100 newest posts across them) into **3 requests per run** and waits the time Reddit asks for between them. A run takes about 2–3 minutes. `r/ChatGPT` is busy, so it gets its own request so it doesn't crowd out the others. You can change this under `keyless` in the config.
 
 Things to know:
 - RSS has no "pinned" or flair info. The 24-hour age filter and the `[For Hire]` title filter still cover most of that.
@@ -106,7 +108,7 @@ Each run sends one short header, then one message per lead. The draft is in a co
 3. Deploy (or **Redeploy** after adding variables; Vercel only picks up new variables on a new deploy).
 4. Open `https://<your-app>.vercel.app/dashboard` and log in.
 
-A run can take 1–2 minutes (polite pacing plus AI calls). The `/api/run` route allows up to 300 seconds, which Vercel's free plan supports.
+A run can take 2–4 minutes (Reddit's pacing plus AI calls). The `/api/run` route allows up to 300 seconds, which Vercel's free plan supports.
 
 Changing `DASHBOARD_PASSWORD` or `SESSION_SECRET` logs out every open session.
 
@@ -171,7 +173,7 @@ For local runs, put keys in `.env.local` (copy `.env.example`) and load it, e.g.
 | Rule | Where |
 |---|---|
 | Never posts, comments, votes or messages | `src/lib/reddit.ts` only sends GET requests for content. The single POST goes to the OAuth token URL with `scope=read`. `tests/no-posting.test.ts` scans the codebase for Reddit write endpoints and libraries and fails CI if any appear. |
-| Polite reading | 3s between requests in RSS mode, 1.1s with the official API. Honours `x-ratelimit-*` and `Retry-After`, sends a proper User-Agent, and only reads the configured subreddits (names validated). |
+| Polite reading | RSS mode: 3 combined requests per run, spaced by Reddit's own rate-limit headers (≈1/min). Official API: one request per subreddit, 1.1s apart. Honours `x-ratelimit-*` and `Retry-After`, sends a proper User-Agent, and only reads the configured subreddits (names validated). |
 | Same post never sent twice | Every fetched id is stored. Leads are "claimed" with a conditional update (`notified_at IS NULL`) before sending, so two overlapping runs can't both send one. If Telegram fails mid-way, unsent leads are released for the next run. |
 | No personal names | Author fields and RSS "submitted by /u/…" footers are dropped at parse time. Prompts forbid names and sign-offs; replies use "Smartvyn" / "we". |
 | Draft rules | The prompt asks for helpful, short, human replies with no invented facts. Code then **enforces** links: none at all unless the post asks for a developer or recommendations (and promo risk isn't high), then at most one portfolio link. Emojis are stripped. |
